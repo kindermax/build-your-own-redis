@@ -67,11 +67,8 @@ int main() {
     int *p_client_fd = malloc(sizeof(int));
     *p_client_fd = client_fd;
 
-    pthread_t thr;
-    if (pthread_create(&thr, NULL, handle_client, (void *)p_client_fd) != 0) {
-      printf("Failed to handle client connection\n");
-    };
-    // TODO: join ?
+    pthread_t t_id;
+    pthread_create(&t_id, NULL, handle_client, (void *)p_client_fd);
   }
 
   close(server_fd);
@@ -84,15 +81,17 @@ void *handle_client(void *fd) {
   free(fd);
   char buffer[BUFFER_SIZE];
 
-  while (1) {
-    const char *msg = "+PONG\r\n";
-    if (recv(client_fd, buffer, BUFFER_SIZE, 0) == -1) {
-      printf("Receive failed: %s\n", strerror(errno));
-      break;
-    };
-    write(client_fd, msg, strlen(msg));
+  const char *msg = "+PONG\r\n";
+
+  ssize_t bytes;
+  while ((bytes = recv(client_fd, buffer, BUFFER_SIZE, 0))) {
+    send(client_fd, msg, strlen(msg), 0);
   }
 
-  close(client_fd);
+  if (bytes == -1) {
+    close(client_fd);
+    fprintf(stderr, "Receiving failed: %s\n", strerror(errno));
+  }
+
   return NULL;
 }
