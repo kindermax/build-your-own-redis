@@ -1,6 +1,7 @@
 #include <errno.h>
 #include <netinet/in.h>
 #include <netinet/ip.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -8,6 +9,8 @@
 #include <unistd.h>
 
 #define BUFFER_SIZE 1024
+
+void *handle_client(void *fd);
 
 int main() {
   // Disable output buffering
@@ -51,10 +54,34 @@ int main() {
   printf("Waiting for a client to connect...\n");
   client_addr_len = sizeof(client_addr);
 
-  int client_fd =
-      accept(server_fd, (struct sockaddr *)&client_addr, &client_addr_len);
-  printf("Client connected\n");
+  while (1) {
+    // TODO: maybe accept should be in a loop?
+    int client_fd =
+        accept(server_fd, (struct sockaddr *)&client_addr, &client_addr_len);
 
+    if (client_fd == -1) {
+      printf("Could not accept connection from client.\n");
+      return 1;
+    }
+    printf("Client %d connected\n", client_fd);
+    int *p_client_fd = malloc(sizeof(int));
+    *p_client_fd = client_fd;
+
+    pthread_t thr;
+    if (pthread_create(&thr, NULL, handle_client, (void *)p_client_fd) != 0) {
+      printf("Failed to handle client connection\n");
+    };
+    // TODO: join ?
+  }
+
+  close(server_fd);
+
+  return 0;
+}
+
+void *handle_client(void *fd) {
+  int client_fd = *(int *)(fd);
+  free(fd);
   char buffer[BUFFER_SIZE];
 
   while (1) {
@@ -67,7 +94,5 @@ int main() {
   }
 
   close(client_fd);
-  close(server_fd);
-
-  return 0;
+  return NULL;
 }
