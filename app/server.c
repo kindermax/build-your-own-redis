@@ -9,9 +9,10 @@
 
 #define BUFFER_SIZE 1024
 
+// RESP protocol type
 typedef enum {
-  ARRAY,
-  BULK,
+  MessageTypeArray,
+  MessageTypeBulk,
 } MessageType;
 
 typedef struct Message Message;
@@ -36,17 +37,17 @@ struct Message {
   } as;
 };
 
-Message *parseMessage(char **cursor);
-Message *parseArray(char **cursor);
-Message *parseBulk(char **cursor);
+Message *parse_message(char **cursor);
+Message *parse_array(char **cursor);
+Message *parse_bulk(char **cursor);
 
-Message *parseMessage(char **cursor) {
+Message *parse_message(char **cursor) {
   switch (*cursor[0]) {
   case '*': {
-    return parseArray(cursor);
+    return parse_array(cursor);
   }
   case '$': {
-    return parseBulk(cursor);
+    return parse_bulk(cursor);
   }
   default:
     printf("Error symbol not allowed, exiting, %s\n", *cursor);
@@ -54,7 +55,7 @@ Message *parseMessage(char **cursor) {
   }
 }
 
-Message *parseArray(char **cursor) {
+Message *parse_array(char **cursor) {
   char *input = *cursor;
   char *data = input + 1; // skip data type
 
@@ -65,20 +66,20 @@ Message *parseArray(char **cursor) {
   }
 
   Message *message = malloc(sizeof(Message));
-  message->type = ARRAY;
+  message->type = MessageTypeArray;
   message->as.array.len = len;
   message->as.array.items = malloc(sizeof(Message *) * len);
 
   *cursor = data + 2; // skip data + \r\n
 
   for (int i = 0; i < len; i++) {
-    message->as.array.items[i] = parseMessage(cursor);
+    message->as.array.items[i] = parse_message(cursor);
   }
 
   return message;
 }
 
-Message *parseBulk(char **cursor) {
+Message *parse_bulk(char **cursor) {
   char *input = *cursor;
   char *data = input + 1; // skip data type
 
@@ -90,15 +91,13 @@ Message *parseBulk(char **cursor) {
 
   data += 2; // skip \r\n
 
-  // allocate memory for the string
   char *str = malloc(len + 1);
-  // copy the string from the buffer into our new memory
   memcpy(str, data, len);
   str[len] = '\0';
 
   Message *message = malloc(sizeof(Message));
 
-  message->type = BULK;
+  message->type = MessageTypeBulk;
   message->as.bulk.len = len;
   message->as.bulk.string = str;
 
@@ -107,17 +106,109 @@ Message *parseBulk(char **cursor) {
   return message;
 }
 
-void freeMessage(Message *message) {
-  if (message->type == ARRAY) {
+void free_message(Message *message) {
+  if (message->type == MessageTypeArray) {
     for (int i = 0; i < message->as.array.len; i++) {
-      freeMessage(message->as.array.items[i]);
+      free_message(message->as.array.items[i]);
     }
     free(message->as.array.items);
     free(message);
-  } else if (message->type == BULK) {
+  } else if (message->type == MessageTypeBulk) {
     free(message->as.bulk.string);
     free(message);
   }
+}
+
+typedef enum {
+    RedisCommandEcho,
+    RedisCommandPing,
+    RedisCommandNone,
+} RedisCommandType;
+
+struct RedisArg {
+    char *value;
+    struct RedisArg *next;
+};
+
+typedef struct RedisArg RedisArg;
+
+typedef struct {
+    RedisCommandType type;
+    RedisArg *args;
+} RedisCommand;
+
+RedisCommandType get_command_type(char *value);
+void add_redis_arg(RedisCommand *command, RedisArg *arg);
+RedisArg *create_redis_arg(const char *value);
+
+RedisCommand *create_redis_command(Message *message) {
+    if (message->type != MessageTypeArray || message->as.array.len < 1) {
+        printf("Must be non-empty array");
+        return NULL;
+    }
+
+    Message **elements = message->as.array.items;
+    RedisCommandType command_type = get_command_type(elements[0]->as.bulk.string);
+
+    RedisCommand *command = malloc(sizeof(RedisCommand));
+    command->type = command_type;
+    command->args = NULL;
+
+    for (int i = 1; i < message->as.array.len; i++) {
+        switch (elements[i]->type) {
+            case MessageTypeBulk:
+                add_redis_arg(command, create_redis_arg(elements[i]->as.bulk.string));
+                break;
+        }
+        
+    }
+
+    return command;
+}
+
+RedisCommandType get_command_type(char *value) {
+    if (strcmp(value, "ECHO") == 0) {
+        return RedisCommandEcho;
+    } else if (strcmp(value, "PING") == 0) {
+        return RedisCommandPing;
+    }
+
+    return RedisCommandNone;
+}
+
+RedisArg *create_redis_arg(const char *value) {
+    RedisArg *arg = malloc(sizeof(RedisArg));
+    arg->value = strdup(value);
+    arg->next = NULL;
+    return arg;
+}
+
+void add_redis_arg(RedisCommand *command, RedisArg *arg) {
+    if (command->args == NULL) {
+        command->args = arg;
+    } else {
+        RedisArg *cur = command->args;
+        while (cur->next != NULL) {
+            cur = command->args->next;
+        }
+        cur->next = arg;
+    }
+}
+
+void free_redis_args(RedisArg *args) {
+    while (args != NULL) {
+        RedisArg *next = args->next;
+        free(args->value);
+        free(args);
+        args = next;
+    }
+}
+
+void free_redis_command(RedisCommand *command) {
+    if (command != NULL) {
+        free_redis_args(command->args);
+        free(command);
+    }
 }
 
 void *handle_client(void *fd);
@@ -194,29 +285,23 @@ void *handle_client(void *fd) {
   while ((bytes = recv(client_fd, buffer, BUFFER_SIZE, 0))) {
     // TODO: how do we know that we have a full message in bytes?
     char *cursor = buffer;
-    Message *message = parseMessage(&cursor);
+    Message *message = parse_message(&cursor);
     printf("Message type: %d\n", message->type);
 
-    if (message->type == ARRAY) {
-      if (message->as.array.len == 1) {
-        // TODO: how to know that array contains BULK ? check type for each
-        // element ?
-        if (strcmp(message->as.array.items[0]->as.bulk.string, "PING") == 0) {
-          send(client_fd, "+PONG\r\n", 7, 0);
-        }
-      } else if (message->as.array.len == 2) {
-        if (strcmp(message->as.array.items[0]->as.bulk.string, "ECHO") == 0) {
-          int len = message->as.array.items[1]->as.bulk.len;
-          char *string = message->as.array.items[1]->as.bulk.string;
-          char msg[len + 1];
-          sprintf(msg, "$%d\r\n%s\r\n", len, string);
-          send(client_fd, msg, strlen(msg), 0);
-        }
-      }
+    RedisCommand *command = create_redis_command(message);
+
+    if (command->type == RedisCommandEcho) {
+        size_t len = strlen(command->args->value);
+        char msg[len + 1];
+        sprintf(msg, "$%lu\r\n%s\r\n", len, command->args->value);
+        send(client_fd, msg, strlen(msg), 0);
+    } else if (command->type == RedisCommandPing) {
+        send(client_fd, "+PONG\r\n", 7, 0);
     }
 
     // TODO: comment this and check how memory is growing
-    freeMessage(message);
+    free_message(message);
+    free_redis_command(command);
   }
 
   if (bytes == -1) {
