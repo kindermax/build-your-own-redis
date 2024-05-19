@@ -1,6 +1,5 @@
 #include <errno.h>
 #include <netinet/in.h>
-#include <netinet/ip.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -9,14 +8,10 @@
 #include <unistd.h>
 
 #define BUFFER_SIZE 1024
-#define DEFAULT_CAPACITY 8
-
-// TODO: add freeX functinos
 
 typedef enum {
   ARRAY,
   BULK,
-  STRING,
 } MessageType;
 
 typedef struct Message Message;
@@ -41,36 +36,32 @@ struct Message {
   } as;
 };
 
-// Example PING message: *1\r\n$4\r\nPING\r\n
-// Example ECHO hey messageL *2\r\n$4\r\nECHO\r\n$3\r\nhey\r\n
-//
+Message *parseMessage(char **cursor);
+Message *parseArray(char **cursor);
+Message *parseBulk(char **cursor);
 
-Message *parseMessage(char *buffer);
-Message *parseArray(char *buffer);
-Message *parseBulk(char *buffer);
-
-Message *parseMessage(char *buffer) {
-  printf("Parsing message: %s\n", buffer);
-  switch (buffer[0]) {
+Message *parseMessage(char **cursor) {
+  switch (*cursor[0]) {
   case '*': {
-    return parseArray(buffer);
+    return parseArray(cursor);
   }
   case '$': {
-    return parseBulk(buffer);
+    return parseBulk(cursor);
   }
   default:
-    printf("Error symbol not allowed, exiting, %c\n", *buffer);
+    printf("Error symbol not allowed, exiting, %s\n", *cursor);
     return NULL;
   }
 }
 
-Message *parseArray(char *buffer) {
-  buffer++; // skip data type
+Message *parseArray(char **cursor) {
+  char *input = *cursor;
+  char *data = input + 1; // skip data type
 
   int len = 0;
-  while (*buffer != '\r') {
-    len = (len * 10) + (*buffer - '0');
-    buffer++;
+  while (*data != '\r') {
+    len = (len * 10) + (*data - '0');
+    data++;
   }
 
   Message *message = malloc(sizeof(Message));
@@ -78,41 +69,40 @@ Message *parseArray(char *buffer) {
   message->as.array.len = len;
   message->as.array.items = malloc(sizeof(Message *) * len);
 
-  buffer += 2; // skip \r\n
+  *cursor = data + 2; // skip data + \r\n
 
-  // TODO: there is a bug. At this point buffer pointer not incremented
-  //  and we are parsing the same message again
   for (int i = 0; i < len; i++) {
-    printf("Parsing array item message: %s\n", buffer);
-    message->as.array.items[i] = parseMessage(buffer);
+    message->as.array.items[i] = parseMessage(cursor);
   }
 
   return message;
 }
 
-Message *parseBulk(char *buffer) {
-  buffer++; // skip data type
+Message *parseBulk(char **cursor) {
+  char *input = *cursor;
+  char *data = input + 1; // skip data type
 
   int len = 0;
-  while (*buffer != '\r') {
-    len = (len * 10) + (*buffer - '0');
-    buffer++;
+  while (*data != '\r') {
+    len = (len * 10) + (*data - '0');
+    data++;
   }
 
-  buffer += 2; // skip \r\n
+  data += 2; // skip \r\n
+
   // allocate memory for the string
-  char *data = malloc(len + 1);
+  char *str = malloc(len + 1);
   // copy the string from the buffer into our new memory
-  memcpy(data, buffer, len);
-  data[len] = '\0';
+  memcpy(str, data, len);
+  str[len] = '\0';
 
   Message *message = malloc(sizeof(Message));
 
   message->type = BULK;
   message->as.bulk.len = len;
-  message->as.bulk.string = data;
+  message->as.bulk.string = str;
 
-  buffer += len + 2; // skip data and \r\n
+  *cursor = data + len + 2; // skip data and \r\n
 
   return message;
 }
@@ -202,16 +192,12 @@ void *handle_client(void *fd) {
 
   ssize_t bytes;
   while ((bytes = recv(client_fd, buffer, BUFFER_SIZE, 0))) {
-    // TODO: what is a guarantine that we have a full message in bytes?
-    Message *message = parseMessage(buffer);
+    // TODO: how do we know that we have a full message in bytes?
+    char *cursor = buffer;
+    Message *message = parseMessage(&cursor);
     printf("Message type: %d\n", message->type);
 
     if (message->type == ARRAY) {
-      printf("Array length: %d\n", message->as.array.len);
-      printf("Array items[0] len: %d\n",
-             message->as.array.items[0]->as.bulk.len);
-      printf("Array items[0]: %s\n",
-             message->as.array.items[0]->as.bulk.string);
       if (message->as.array.len == 1) {
         // TODO: how to know that array contains BULK ? check type for each
         // element ?
