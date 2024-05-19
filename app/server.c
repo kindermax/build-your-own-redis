@@ -7,7 +7,16 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include "table.h"
+
 #define BUFFER_SIZE 1024
+
+Table db;
+
+#define GEN_BULK_STRING(buf, msg, len) sprintf(buf, "$%lu\r\n%s\r\n", len, msg)
+const char PING_MSG[7] = "+PONG\r\n";
+const char OK_MSG[5] = "+OK\r\n";
+const char NULL_BULK[5] = "$-1\r\n";
 
 // RESP protocol type
 typedef enum {
@@ -122,6 +131,8 @@ void free_message(Message *message) {
 typedef enum {
     RedisCommandEcho,
     RedisCommandPing,
+    RedisCommandSet,
+    RedisCommandGet,
     RedisCommandNone,
 } RedisCommandType;
 
@@ -143,7 +154,7 @@ RedisArg *create_redis_arg(const char *value);
 
 RedisCommand *create_redis_command(Message *message) {
     if (message->type != MessageTypeArray || message->as.array.len < 1) {
-        printf("Must be non-empty array");
+        printf("Must be non-empty array\n");
         return NULL;
     }
 
@@ -154,15 +165,21 @@ RedisCommand *create_redis_command(Message *message) {
     command->type = command_type;
     command->args = NULL;
 
+    printf("Args len %d\n", message->as.array.len);
     for (int i = 1; i < message->as.array.len; i++) {
+        printf("Arg %d type %d, value %s\n", i, elements[i]->type, elements[i]->as.bulk.string);
         switch (elements[i]->type) {
             case MessageTypeBulk:
                 add_redis_arg(command, create_redis_arg(elements[i]->as.bulk.string));
                 break;
         }
-        
     }
 
+    RedisArg *arg = command->args;
+    while (arg != NULL) {
+        printf("New arg %s\n", arg->value);
+        arg = arg->next;
+    }
     return command;
 }
 
@@ -171,6 +188,10 @@ RedisCommandType get_command_type(char *value) {
         return RedisCommandEcho;
     } else if (strcmp(value, "PING") == 0) {
         return RedisCommandPing;
+    } else if (strcmp(value, "SET") == 0) {
+        return RedisCommandSet;
+    } else if (strcmp(value, "GET") == 0) {
+        return RedisCommandGet;
     }
 
     return RedisCommandNone;
@@ -208,6 +229,40 @@ void free_redis_command(RedisCommand *command) {
     if (command != NULL) {
         free_redis_args(command->args);
         free(command);
+    }
+}
+
+// TODO: use table of function pointers
+// TODO: maybe we do not need to pass client_fd here but to return ExecutionResult like msg and msg len to send
+void execute_echo_command(int client_fd, RedisCommand *command) {
+    char msg[100];
+    int msg_len = GEN_BULK_STRING(msg, command->args->value, strlen(command->args->value));
+    send(client_fd, msg, msg_len, 0);
+}
+
+void execute_ping_command(int client_fd, RedisCommand *command) {
+    send(client_fd, PING_MSG, sizeof(PING_MSG), 0);
+}
+
+void execute_set_command(int client_fd, RedisCommand *command) {
+    char *value = command->args->next->value;
+    Key *key = new_key(command->args->value);
+    // TODO: insertion to db must be guarded by mutex
+    table_set(&db, key, value);
+    send(client_fd, OK_MSG, sizeof(OK_MSG), 0);
+}
+
+void execute_get_command(int client_fd, RedisCommand *command) {
+    char *value;
+    Key *key = new_key(command->args->value);
+    // TODO: selection from db must be guarded by mutex ?
+    bool found = table_get(&db, key, &value);
+    if (found) {
+        char msg[100];
+        int msg_len = GEN_BULK_STRING(msg, value, strlen(value));
+        send(client_fd, msg, msg_len, 0);
+    } else {
+        send(client_fd, NULL_BULK, sizeof(NULL_BULK), 0);
     }
 }
 
@@ -255,6 +310,8 @@ int main() {
   printf("Waiting for a client to connect...\n");
   client_addr_len = sizeof(client_addr);
 
+  init_table(&db);
+
   while (1) {
     int client_fd = accept(server_fd, (struct sockaddr *)&client_addr, &client_addr_len);
 
@@ -285,18 +342,22 @@ void *handle_client(void *fd) {
   while ((bytes = recv(client_fd, buffer, BUFFER_SIZE, 0))) {
     // TODO: how do we know that we have a full message in bytes?
     char *cursor = buffer;
+
     Message *message = parse_message(&cursor);
     printf("Message type: %d\n", message->type);
-
     RedisCommand *command = create_redis_command(message);
+    printf("Command type: %d\n", command->type);
 
     if (command->type == RedisCommandEcho) {
-        size_t len = strlen(command->args->value);
-        char msg[len + 1];
-        sprintf(msg, "$%lu\r\n%s\r\n", len, command->args->value);
-        send(client_fd, msg, strlen(msg), 0);
+        execute_echo_command(client_fd, command);
     } else if (command->type == RedisCommandPing) {
-        send(client_fd, "+PONG\r\n", 7, 0);
+        execute_ping_command(client_fd, command);
+    } else if (command->type == RedisCommandSet) {
+        execute_set_command(client_fd, command);
+    } else if (command->type == RedisCommandGet) {
+        execute_get_command(client_fd, command);
+    } else {
+        printf("Unknown redis command\n");
     }
 
     // TODO: comment this and check how memory is growing
