@@ -1,5 +1,0 @@
-# ninja log v5
-0	31	1716138783156045440	build.ninja	d079ecde1f09ed5d
-0	33	1716135375114467758	CMakeFiles/codecrafters_redis.dir/app/table.c.o	8a1ade2c5e8a0e35
-1	33	1716136053804820354	CMakeFiles/codecrafters_redis.dir/app/server.c.o	69c215edca80f7d
-34	58	1716136053830000547	codecrafters_redis	579cc955110389fe
