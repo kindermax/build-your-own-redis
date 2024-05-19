@@ -37,12 +37,18 @@ static Entry* find_entry(Entry* entries, int capacity, Key *key) {
     for (;;) {
         Entry* entry = &entries[index];
         if (entry->key == NULL) {
-            if (entry->value == NULL) {
-                // Empty entry.
-                return tombstone != NULL ? tombstone : entry;
+            if (entry->deleted) {
+                // We found a tombstone. Will return it instead of next empty entry.
+                if (tombstone == NULL) {
+                    tombstone = entry;
+                }
             } else {
-                // We found a tombstone.
-                if (tombstone == NULL) tombstone = entry;
+                // Empty entry.
+                if (tombstone) {
+                    // We have a tombstone and can use it as a candidate entry
+                    return tombstone;
+                }
+                return entry;
             }
         } else if (strcmp(entry->key->name, key->name) == 0) {
             // We found the key.
@@ -60,6 +66,7 @@ static void adjust_capacity(Table* table, int capacity) {
     for (int i = 0; i < capacity; i++) {
         entries[i].key = NULL;
         entries[i].value = NULL;
+        entries[i].deleted = false;
     }
 
     table->count = 0;
@@ -90,37 +97,9 @@ bool table_set(Table* table, Key* key, char* value) {
     if (isNewKey && entry->value == NULL) table->count++;
 
     entry->key = key;
-    entry->value = strdup(value); // TODO: without strdup it looks at random memory
+    entry->value = strdup(value);
+    entry->deleted = false;
     return isNewKey;
-}
-
-void tableAddAll(Table* from, Table* to) {
-    for (int i = 0; i < from->capacity; i++) {
-        Entry* entry = &from->entries[i];
-        if (entry->key != NULL) {
-            table_set(to, entry->key, entry->value);
-        }
-    }
-}
-
-Key* table_find_string(Table* table, const char* chars, int length, uint32_t hash) {
-  if (table->count == 0) return NULL;
-
-  uint32_t index = hash % table->capacity;
-  for (;;) {
-    Entry* entry = &table->entries[index];
-    if (entry->key == NULL) {
-      // Stop if we find an empty non-tombstone entry.
-      if (entry->value == NULL) return NULL;
-    } else if (entry->key->length == length &&
-        entry->key->hash == hash &&
-        memcmp(entry->key->name, chars, length) == 0) {
-      // We found it.
-      return entry->key;
-    }
-
-    index = (index + 1) % table->capacity;
-  }
 }
 
 bool table_get(Table* table, Key* key, char** value) {
@@ -128,6 +107,13 @@ bool table_get(Table* table, Key* key, char** value) {
 
     Entry* entry = find_entry(table->entries, table->capacity, key);
     if (entry->key == NULL) return false;
+
+    long now = get_time_ms();
+    if (entry->key->expire_at > 0 && entry->key->expire_at < now) {
+        // making it a tombstone
+        entry->deleted = true;
+        return false;
+    }
 
     *value = entry->value;
     return true;
@@ -141,8 +127,8 @@ bool table_delete(Table* table, Key* key) {
 
     // Place a tombstone in the entry.
     entry->key = NULL;
-    // TODO: it may broke tombstone logic, since
     entry->value = NULL;
+    entry->deleted = true;
     return true;
 }
 
@@ -153,6 +139,7 @@ Key* new_key(const char* name) {
     key->name = strdup(name);
     key->length = length;
     key->hash = hash;
+    key->expire_at = 0;
     return key;
 }
 

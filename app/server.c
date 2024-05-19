@@ -11,6 +11,7 @@
 
 #define BUFFER_SIZE 1024
 
+// TODO: cleanup thread
 Table db;
 
 #define GEN_BULK_STRING(buf, msg, len) sprintf(buf, "$%lu\r\n%s\r\n", len, msg)
@@ -146,6 +147,7 @@ typedef struct RedisArg RedisArg;
 typedef struct {
     RedisCommandType type;
     RedisArg *args;
+    int argc;
 } RedisCommand;
 
 RedisCommandType get_command_type(char *value);
@@ -164,10 +166,12 @@ RedisCommand *create_redis_command(Message *message) {
     RedisCommand *command = malloc(sizeof(RedisCommand));
     command->type = command_type;
     command->args = NULL;
+    command->argc = 0;
 
     printf("Args len %d\n", message->as.array.len);
     for (int i = 1; i < message->as.array.len; i++) {
         printf("Arg %d type %d, value %s\n", i, elements[i]->type, elements[i]->as.bulk.string);
+        command->argc++;
         switch (elements[i]->type) {
             case MessageTypeBulk:
                 add_redis_arg(command, create_redis_arg(elements[i]->as.bulk.string));
@@ -210,7 +214,7 @@ void add_redis_arg(RedisCommand *command, RedisArg *arg) {
     } else {
         RedisArg *cur = command->args;
         while (cur->next != NULL) {
-            cur = command->args->next;
+            cur = cur->next;
         }
         cur->next = arg;
     }
@@ -247,8 +251,16 @@ void execute_ping_command(int client_fd, RedisCommand *command) {
 void execute_set_command(int client_fd, RedisCommand *command) {
     char *value = command->args->next->value;
     Key *key = new_key(command->args->value);
-    // TODO: insertion to db must be guarded by mutex
+    if (command->argc == 4) {
+        // PX
+        char *opt = command->args->next->next->value;
+        if (strcasecmp(opt, "px") == 0) {
+            int expire_ms = atoi(command->args->next->next->next->value);
+            key->expire_at = get_time_ms() + expire_ms;
+        }
+    }
     table_set(&db, key, value);
+    // TODO: insertion to db must be guarded by mutex
     send(client_fd, OK_MSG, sizeof(OK_MSG), 0);
 }
 
