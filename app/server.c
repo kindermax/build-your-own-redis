@@ -12,6 +12,7 @@
 #include "command.h"
 
 #define BUFFER_SIZE 1024
+#define DEFAULT_PORT 6379
 
 // TODO: cleanup thread
 Table db;
@@ -21,7 +22,36 @@ void send_command(int client_fd, char *buf, int len) {
     send(client_fd, buf, len, 0);
 }
 
-int main() {
+
+bool is_option(char *option, char *name, char *short_name) {
+    if (option == NULL) {
+        return false;
+    }
+
+    if (strcmp(option, name) == 0) {
+        return true;
+    }
+
+    if (short_name != NULL && strcmp(option, short_name) == 0) {
+        return true;
+    }
+
+    return false;
+}
+
+int main(int argc, char **argv) {
+  int port = DEFAULT_PORT;
+  char *program = argv[0];
+
+  for (int i = 1; i < argc + 1; i += 2) {
+      if (is_option(argv[i], "--port", "-p")) {
+          port = atoi(argv[i + 1]);
+      } else if (is_option(argv[i], "--help", "-h")) {
+          printf("Usage: %s [--port=<port>|-h] [--help|-h]\n", program);
+          return 0;
+      }
+  }
+
   // Disable output buffering
   setbuf(stdout, NULL);
 
@@ -45,7 +75,7 @@ int main() {
 
   struct sockaddr_in serv_addr = {
       .sin_family = AF_INET,
-      .sin_port = htons(6379),
+      .sin_port = htons(port),
       .sin_addr = {htonl(INADDR_ANY)},
   };
 
@@ -64,6 +94,8 @@ int main() {
   client_addr_len = sizeof(client_addr);
 
   init_table(&db);
+
+  printf("%s server running on :%d\n", program, port);
 
   while (1) {
     int client_fd = accept(server_fd, (struct sockaddr *)&client_addr, &client_addr_len);
