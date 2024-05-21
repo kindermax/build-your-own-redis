@@ -34,9 +34,9 @@ RedisArg *create_redis_arg(const char *value);
 void free_redis_args(RedisArg *args);
 void free_redis_command(RedisCommand *command);
 
-void execute_echo_command(int client_fd, RedisCommand *command);
-void execute_ping_command(int client_fd, RedisCommand *command);
-void execute_set_command(Table *db, int client_fd, RedisCommand *command);
-void execute_get_command(Table *db, int client_fd, RedisCommand *command);
+void execute_echo_command(RedisCommand *command, char *resp_buf, int *resp_len);
+void execute_ping_command(RedisCommand *command, char *resp_buf, int *resp_len);
+void execute_set_command(Table *db, RedisCommand *command, char *resp_buf, int *resp_len);
+void execute_get_command(Table *db, RedisCommand *command, char *resp_buf, int *resp_len);
 
 #endif //redis_command_h

@@ -17,6 +17,9 @@
 Table db;
 
 void *handle_client(void *fd);
+void send_command(int client_fd, char *buf, int len) {
+    send(client_fd, buf, len, 0);
+}
 
 int main() {
   // Disable output buffering
@@ -98,17 +101,22 @@ void *handle_client(void *fd) {
     RedisCommand *command = create_redis_command(message);
     printf("Command type: %d\n", command->type);
 
+    char resp_buf[1024];
+    int resp_len;
+
     if (command->type == RedisCommandEcho) {
-        execute_echo_command(client_fd, command);
+        execute_echo_command(command, resp_buf, &resp_len);
     } else if (command->type == RedisCommandPing) {
-        execute_ping_command(client_fd, command);
+        execute_ping_command(command, resp_buf, &resp_len);
     } else if (command->type == RedisCommandSet) {
-        execute_set_command(&db, client_fd, command);
+        execute_set_command(&db, command, resp_buf, &resp_len);
     } else if (command->type == RedisCommandGet) {
-        execute_get_command(&db, client_fd, command);
+        execute_get_command(&db, command, resp_buf, &resp_len);
     } else {
         printf("Unknown redis command\n");
     }
+
+    send_command(client_fd, resp_buf, resp_len);
 
     // TODO: comment this and check how memory is growing
     free_message(message);

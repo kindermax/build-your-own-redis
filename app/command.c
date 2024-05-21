@@ -1,4 +1,5 @@
-#include <sys/socket.h>
+#include <stdlib.h>
+
 #include "command.h"
 #include "table.h"
 
@@ -90,17 +91,16 @@ void free_redis_command(RedisCommand *command) {
 
 // TODO: use table of function pointers
 // TODO: maybe we do not need to pass client_fd here but to return ExecutionResult like msg and msg len to send
-void execute_echo_command(int client_fd, RedisCommand *command) {
-    char msg[100];
-    int msg_len = GEN_BULK_STRING(msg, command->args->value, strlen(command->args->value));
-    send(client_fd, msg, msg_len, 0);
+void execute_echo_command(RedisCommand *command, char *resp_buf, int *resp_len) {
+    *resp_len = GEN_BULK_STRING(resp_buf, command->args->value, strlen(command->args->value));
 }
 
-void execute_ping_command(int client_fd, RedisCommand *command) {
-    send(client_fd, PING_MSG, sizeof(PING_MSG), 0);
+void execute_ping_command(RedisCommand *command, char *resp_buf, int *resp_len) {
+    *resp_len = sizeof(PING_MSG);
+    memcpy(resp_buf, PING_MSG, *resp_len);
 }
 
-void execute_set_command(Table *db, int client_fd, RedisCommand *command) {
+void execute_set_command(Table *db, RedisCommand *command, char *resp_buf, int *resp_len) {
     char *value = command->args->next->value;
     Key *key = new_key(command->args->value);
     if (command->argc == 4) {
@@ -113,19 +113,19 @@ void execute_set_command(Table *db, int client_fd, RedisCommand *command) {
     }
     table_set(db, key, value);
     // TODO: insertion to db must be guarded by mutex
-    send(client_fd, OK_MSG, sizeof(OK_MSG), 0);
+    *resp_len = sizeof(PING_MSG);
+    memcpy(resp_buf, OK_MSG, *resp_len);
 }
 
-void execute_get_command(Table *db, int client_fd, RedisCommand *command) {
+void execute_get_command(Table *db, RedisCommand *command, char *resp_buf, int *resp_len) {
     char *value;
     Key *key = new_key(command->args->value);
     // TODO: selection from db must be guarded by mutex ?
     bool found = table_get(db, key, &value);
     if (found) {
-        char msg[100];
-        int msg_len = GEN_BULK_STRING(msg, value, strlen(value));
-        send(client_fd, msg, msg_len, 0);
+        *resp_len = GEN_BULK_STRING(resp_buf, value, strlen(value));
     } else {
-        send(client_fd, NULL_BULK, sizeof(NULL_BULK), 0);
+        *resp_len = sizeof(NULL_BULK);
+        memcpy(resp_buf, NULL_BULK, *resp_len);
     }
 }
