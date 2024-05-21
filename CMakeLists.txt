@@ -8,4 +8,8 @@ add_executable(codecrafters_redis
         app/table.h
         app/table.c
         app/util.h
-        app/util.c)
+        app/util.c
+        app/parser.h
+        app/parser.c
+        app/command.h
+        app/command.c)
