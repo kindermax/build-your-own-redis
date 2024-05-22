@@ -113,7 +113,7 @@ void execute_set_command(Table *db, RedisCommand *command, char *resp_buf, int *
     }
     table_set(db, key, value);
     // TODO: insertion to db must be guarded by mutex
-    *resp_len = sizeof(PING_MSG);
+    *resp_len = sizeof(OK_MSG);
     memcpy(resp_buf, OK_MSG, *resp_len);
 }
 
