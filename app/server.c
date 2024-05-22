@@ -24,18 +24,19 @@ void send_command(int client_fd, char *buf, int len) {
 
 
 void print_raw_bytes(const char *msg, const char *data) {
-    char buf[1024];
+    printf("%s ", msg);
+
     for (int i = 0; i < strlen(data); i++) {
         if (data[i] == '\n') {
-            buf[i] = '\\n';
+            printf("\\n");
         } else if (data[i] == '\r') {
-            buf[i] = '\\r';
+            printf("\\r");
         } else {
-            buf[i] = data[i];
+            printf("%c", data[i]);
         }
     }
 
-    printf(msg, buf);
+    printf("\n");
 }
 
 bool is_option(char *option, char *name, char *short_name) {
@@ -142,7 +143,7 @@ void *handle_client(void *fd) {
   while ((bytes = recv(client_fd, buffer, BUFFER_SIZE, 0))) {
     // TODO: how do we know that we have a full message in bytes?
     char *cursor = buffer;
-    print_raw_bytes("Receive raw bytes %s\n", buffer);
+    print_raw_bytes("Receive raw bytes", buffer);
 
     Message *message = parse_message(&cursor);
     printf("Message type: %d\n", message->type);
@@ -165,7 +166,7 @@ void *handle_client(void *fd) {
         // TODO: send error
     }
 
-    printf("Resp: %s : len %d\n", resp_buf, resp_len);
+    print_raw_bytes("Resp: bytes", resp_buf);
     send_command(client_fd, resp_buf, resp_len);
 
     // TODO: comment this and check how memory is growing
